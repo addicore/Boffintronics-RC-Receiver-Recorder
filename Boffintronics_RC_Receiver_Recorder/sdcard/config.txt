@@ -1,4 +1,4 @@
-# DIY Receiver Recorder Configuration v1.0
+# DIY Receiver Recorder Configuration File v1.0
 # for use with Receiver Recorder v1.0 found at https://www.addicore.com/Boffintronics-RC-Receiver-Recorder-p/ad539.htm
 
 
