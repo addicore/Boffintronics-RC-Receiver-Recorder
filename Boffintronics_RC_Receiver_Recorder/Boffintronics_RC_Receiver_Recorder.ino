@@ -6,7 +6,12 @@
 //**********************************************************************************************************************
 // Revision History:
 //
-//       06-16-2020   ARM     Version 1.0   Initial prduction Release
+//       06-16-2020   ARM     Version 1_0  Initial production Release
+//       08-24-2020   ARM     Version 2_1  Added multi track recording
+//                                         Fixed retrigger after lockout bug when using digital I/O as trigger
+//                                         Fixed digital output polarity bug
+//                                         Added flash code version by pressing PGM & REC on power up
+//
 //
 //**********************************************************************************************************************
 //
@@ -41,6 +46,10 @@
 #include <SdFat.h>      // Can be found in the Arduino Library Manager
 #include <MCP23S17.h>   // MCP23S17 Library by Majenko https://github.com/MajenkoLibraries/MCP23S17
 
+
+const byte VERSION = 2;
+const byte REVSION = 1;
+
 //**********************************************************************************************************************
 // SDcard
 
@@ -48,7 +57,7 @@ const int SD_CS = 12; // SD card chip select pin
 
 SdFat SD;
 File file;
-
+File file2;
 
 //------------------------------------------------------------------------------
 #define errorHalt(msg) {Serial.println(F(msg)); SysCall::halt();}
@@ -66,14 +75,14 @@ const byte EXA1 = 1;       //
 const byte PLAY_LED = 3;   // Play mode status LED (high true)
 const byte REC_LED = 4;    // Record mode status LED (high true)
 
-const byte OUT1 = 8;       // Outer left and shoulder button (Controller S4 & S8)
-const byte OUT2 = 9;       // Left Toggle Switch (Controller S2)
-const byte OUT3 = 10;      // Left Joystick button (Controller A1)
-const byte OUT4 = 11;      // Center left button (Controller S5)
-const byte OUT5 = 12;      // Center right button (Controller S6)
-const byte OUT6 = 13;      // Right Joystick button (Controller A2)
-const byte OUT7 = 14;      // Right Toggle Switch (Controller S3)
-const byte OUT8 = 15;      // Outer right and shoulder button (Controller S7 & S9)
+const byte EXB0 = 8;       // Outer left and shoulder button (Controller S4 & S8)
+const byte EXB1 = 9;       // Left Toggle Switch (Controller S2)
+const byte EXB2 = 10;      // Left Joystick button (Controller A1)
+const byte EXB3 = 11;      // Center left button (Controller S5)
+const byte EXB4 = 12;      // Center right button (Controller S6)
+const byte EXB5 = 13;      // Right Joystick button (Controller A2)
+const byte EXB6 = 14;      // Right Toggle Switch (Controller S3)
+const byte EXB7 = 15;      // Outer right and shoulder button (Controller S7 & S9)
 
 // Inputs
 const byte SC_CP = 2;      // SD card present (low true)
@@ -87,7 +96,7 @@ MCP23S17 IOX(&SPI, IOX_CS, 0);
 // Misc Processor I/O
 
 const int PROG_LED = 13;  // Program mode status LED
-const int TRIG_HIGH = 7;  // external high trigger
+const int TRIG_HIGH = 7;  // Play trigger (high true)
 const int LED_ON = 1;
 const int LED_OFF = 0;
 
@@ -128,9 +137,11 @@ int Program = false;
 
 void setup() {
 
+  delay(2000);
+
   //**********************************************************************************************************************
   // IO setup
-  
+
   pinMode(SD_CS, OUTPUT);    digitalWrite(SD_CS, 1);
   pinMode(NRF_CE, OUTPUT);   digitalWrite(NRF_CE, 1);
   pinMode(NRF_CSN, OUTPUT);  digitalWrite(NRF_CSN, 1);
@@ -153,14 +164,14 @@ void setup() {
   IOX.begin();
 
   // MCP23S17 bank A
-  IOX.pinMode(0, INPUT_PULLUP);     // EXA0, high to low play trigger
-  IOX.pinMode(1, INPUT);            // EXA1, low to high play trigger
+  IOX.pinMode(0, INPUT_PULLUP);     // EXA0, play trigger (low true)
+  IOX.pinMode(1, INPUT);            // EXA1, spare (currently unuse
   IOX.pinMode(2, INPUT_PULLUP);     // SD_CP, SD card present (low true)
-  IOX.pinMode(3, OUTPUT);
-  IOX.pinMode(4, OUTPUT);
-  IOX.pinMode(5, INPUT_PULLUP);
-  IOX.pinMode(6, INPUT_PULLUP);
-  IOX.pinMode(7, INPUT_PULLUP);
+  IOX.pinMode(3, OUTPUT);           // play LED (green)
+  IOX.pinMode(4, OUTPUT);           // record LED (red)
+  IOX.pinMode(5, INPUT_PULLUP);     // record button
+  IOX.pinMode(6, INPUT_PULLUP);     // play button
+  IOX.pinMode(7, INPUT_PULLUP);     // prog button
 
   // MCP23S17 bank B
   IOX.pinMode(8, OUTPUT);
@@ -173,32 +184,36 @@ void setup() {
   IOX.pinMode(15, OUTPUT);
 
   IOX.writePort(0, 0b00000000); // init bank A
-  
-  byte mask = EEPROM.read(1); // get init mask from EPROM and init bank B
-  IOX.digitalWrite(OUT1, !bitRead(mask, 7));
-  IOX.digitalWrite(OUT2, !bitRead(mask, 6));
-  IOX.digitalWrite(OUT3, !bitRead(mask, 5));
-  IOX.digitalWrite(OUT4, !bitRead(mask, 4));
-  IOX.digitalWrite(OUT5, !bitRead(mask, 3));
-  IOX.digitalWrite(OUT6, !bitRead(mask, 2));
-  IOX.digitalWrite(OUT7, !bitRead(mask, 1));
-  IOX.digitalWrite(OUT8, !bitRead(mask, 0));
+
+  byte mask = EEPROM.read(1); //  init bank B using polarity mask from EEPROM to set inactive state
+  IOX.digitalWrite(EXB0, !bitRead(mask, 7));
+  IOX.digitalWrite(EXB1, !bitRead(mask, 6));
+  IOX.digitalWrite(EXB2, !bitRead(mask, 5));
+  IOX.digitalWrite(EXB3, !bitRead(mask, 4));
+  IOX.digitalWrite(EXB4, !bitRead(mask, 3));
+  IOX.digitalWrite(EXB5, !bitRead(mask, 2));
+  IOX.digitalWrite(EXB6, !bitRead(mask, 1));
+  IOX.digitalWrite(EXB7, !bitRead(mask, 0));
 
 
   //**********************************************************************************************************************
-  //Serial.begin(19200);  // Initialize serial communications with PC  // un comment for serial debug, must have IDE serial monitor
+  //Serial.begin(19200);  // Initialize serial communications with PC  // uncomment for serial debug, must have IDE serial monitor
   //while (!Serial);      // wait for serial                           //  connected or code will hang
-  Serial.println("------------------------------------");
-  Serial.println("Steve Koci's DIY Remote Controller");
-  Serial.println("         by Addicore.com");
-  Serial.println("Receiver Recorder Beta Version 2_P_G");
-  Serial.println("------------------------------------");
+  Serial.println(F(" Steve Koci's DIY Remote Controller"));
+  Serial.println(F("         by Addicore.com"));
+  Serial.println(F("Receiver Recorder Release Version 2_1"));
+  Serial.println(F("------------------------------------"));
 
-  if (IOX.digitalRead(SC_CP)) { 
+
+  if (!IOX.digitalRead(PROG_BTN) && !IOX.digitalRead(REC_BTN)) { // if PGM & REC are down, flash code version
+    BlinkCodeVersion();
+  }
+
+  if (IOX.digitalRead(SC_CP)) { // Flash error if no SD card inserted
     CardNotPresentError();
   }
 
-  ReadSdConfig(); // load config file from sd card
+  ReadSdConfig(); // load config file from SD card
 
   SetUpRadio();  // Setup Radio for receive
 
@@ -213,7 +228,7 @@ void setup() {
 // main loop
 //**********************************************************************************************************************
 
-
+// operational modes
 const byte REALTIME = 1;
 const byte PLAY = 2;
 const byte REPLAY_DELAY = 3;
@@ -221,8 +236,17 @@ const byte TRIGGER_PLAY = 4;
 const byte TRIGGER_LOCKOUT = 5;
 const byte START_RECORD = 6;
 const byte RECORD = 7;
+const byte READY_TRACK_EDIT = 8;
+const byte START_TRACK_RECORD = 9;
+const byte TRACK_1_RECORD = 10;
+const byte TRACK_RECORD = 11;
+const byte TRACK_EDIT_PLAY = 12;
+//
 
-const int PLAY_LOCKOUT_FLASH = 200;
+const int PLAY_REPLAY_DELAY_FLASH = 200;
+const int TRIGGER_LOCKOUT_FLASH = 100;
+const int TRACK_FLASH = 200;
+const int TRACK_FLASH_DELAY = 600;
 
 const int PLAY_ROW_DIM = 1; // 1 X 7 play array to read from card
 const int PLAY_COL_DIM = 7; //
@@ -232,21 +256,26 @@ const int SERVO_PARAM_ROW_DIM = 6; // 6 X 5 servo parameter array to read from c
 const int SERVO_PARAM_COL_DIM = 5; //
 int spArray[SERVO_PARAM_ROW_DIM][SERVO_PARAM_COL_DIM];
 
-
-byte mode = REALTIME;
-unsigned long loopTime = millis();
-unsigned long playLedFlashTime = millis();
+// parameters read from SD card
 bool recordProtect;
 byte radioFrequency;
 byte digitalOutputPolarity;
 bool triggerEnable;
-unsigned long triggerPowerUpDelayTime = millis();
 unsigned long triggerPowerUpDelay;
 unsigned long triggerLockOutTime;
 unsigned long triggerDelay;
 bool replayEnable;
 unsigned long replayDelayTime;
 unsigned long replayDelay;
+//
+
+byte mode = REALTIME;
+unsigned long loopTime = millis();
+unsigned long playLedFlashTime = millis();
+unsigned long triggerPowerUpDelayTime = millis();
+byte track;
+byte trackBuf;
+byte trackFlashCount;
 
 //**********************************************************************************************************************
 void loop() {
@@ -256,19 +285,24 @@ void loop() {
   switch (mode) {
     //---------------------------------------------------------------------------------------------
     case REALTIME:
+      digitalWrite(PROG_LED, LED_OFF);
       IOX.digitalWrite(PLAY_LED, LED_OFF);
       IOX.digitalWrite(REC_LED, LED_OFF);
 
+
       if (radio.available()) {
         radio.read(&data, sizeof(Data_Package)); // get new data package from radio
+        //Serial.print(millis());
+        //Serial.println(" ");
         WriteOutputs();
       }
+
       break;
     //---------------------------------------------------------------------------------------------
     case PLAY:
       IOX.digitalWrite(PLAY_LED, LED_ON);
       IOX.digitalWrite(REC_LED, LED_OFF);
-      while (millis() < (loopTime + 33)) {
+      while (millis() < (loopTime + 33)) {  // sync to 33 ms
       }
       loopTime = millis();
 
@@ -296,7 +330,7 @@ void loop() {
 
     //---------------------------------------------------------------------------------------------
     case REPLAY_DELAY:
-      if (millis() > (playLedFlashTime + PLAY_LOCKOUT_FLASH)) {
+      if (millis() > (playLedFlashTime + PLAY_REPLAY_DELAY_FLASH)) {
         IOX.digitalWrite (PLAY_LED, !(IOX.digitalRead(PLAY_LED)));
         playLedFlashTime = millis();
       }
@@ -312,7 +346,7 @@ void loop() {
     case TRIGGER_PLAY:
       IOX.digitalWrite(PLAY_LED, LED_ON);
       IOX.digitalWrite(REC_LED, LED_OFF);
-      while (millis() < (loopTime + 33)) {  // sync to 10 ms
+      while (millis() < (loopTime + 33)) {  // sync to 33 ms
       }
       loopTime = millis();
 
@@ -340,7 +374,7 @@ void loop() {
 
     //---------------------------------------------------------------------------------------------
     case TRIGGER_LOCKOUT:
-      if (millis() > (playLedFlashTime + PLAY_LOCKOUT_FLASH)) {
+      if (millis() > (playLedFlashTime + TRIGGER_LOCKOUT_FLASH)) {
         IOX.digitalWrite (PLAY_LED, !(IOX.digitalRead(PLAY_LED)));
         playLedFlashTime = millis();
       }
@@ -348,7 +382,9 @@ void loop() {
       if (millis() > (triggerLockOutTime + triggerDelay)) {
         mode = REALTIME;
         Serial.println("End of Lockout");
+        SetUpRadio(); // flush radio RX buffer
       }
+
       break;
     //---------------------------------------------------------------------------------------------
     case START_RECORD: // flash record led, recording starts on the third flash
@@ -358,7 +394,6 @@ void loop() {
         break;
       }
 
-      InitSDcardWrite();
       IOX.digitalWrite(REC_LED, LED_ON);
       delay(1000);
       IOX.digitalWrite(REC_LED, LED_OFF);
@@ -373,12 +408,157 @@ void loop() {
     case RECORD:
       IOX.digitalWrite(PLAY_LED, LED_OFF);
       IOX.digitalWrite(REC_LED, LED_ON);
+
       if (radio.available()) {
         radio.read(&data, sizeof(Data_Package)); // get new data package from radio
         WriteSDcard();
         WriteOutputs();
       }
       break;
+
+    //---------------------------------------------------------------------------------------------
+    case READY_TRACK_EDIT: // flash next track number to play/record on prog LED
+
+      IOX.digitalWrite(PLAY_LED, LED_OFF);
+      IOX.digitalWrite(REC_LED, LED_OFF);
+
+      if ((trackFlashCount != 0) && (millis() > (playLedFlashTime + TRACK_FLASH))) {
+        digitalWrite (PROG_LED, !(digitalRead(PROG_LED)));
+        if (!(digitalRead(PROG_LED))) {
+          trackFlashCount--;
+        }
+        playLedFlashTime = millis();
+      }
+
+      if ((trackFlashCount == 0) && (millis() > (playLedFlashTime + TRACK_FLASH_DELAY))) {
+        trackFlashCount = track;
+        playLedFlashTime = millis();
+      }
+      break;
+
+    //---------------------------------------------------------------------------------------------
+    case START_TRACK_RECORD: // flash record & play leds, recording starts on the third flash
+
+      if (recordProtect) {
+        RecordProtectError();
+        mode = REALTIME;
+        break;
+      }
+
+      digitalWrite(PROG_LED, LED_ON);
+
+      IOX.digitalWrite(REC_LED, LED_ON);
+      IOX.digitalWrite(PLAY_LED, LED_ON);
+      delay(1000);
+      IOX.digitalWrite(REC_LED, LED_OFF);
+      IOX.digitalWrite(PLAY_LED, LED_OFF);
+      delay(1000);
+      IOX.digitalWrite(REC_LED, LED_ON);
+      IOX.digitalWrite(PLAY_LED, LED_ON);
+      delay(1000);
+      IOX.digitalWrite(REC_LED, LED_OFF);
+      IOX.digitalWrite(PLAY_LED, LED_OFF);
+      delay(1000);
+      if (track == 1) {
+        mode = TRACK_1_RECORD;
+      } else {
+        mode = TRACK_RECORD;
+      }
+      break;
+
+    //---------------------------------------------------------------------------------------------
+    case TRACK_1_RECORD:
+      IOX.digitalWrite(PLAY_LED, LED_ON);
+      IOX.digitalWrite(REC_LED, LED_ON);
+
+      if (radio.available()) {
+        radio.read(&data, sizeof(Data_Package)); // get new data package from radio
+        WriteSDcard();
+        WriteOutputs();
+      }
+      break;
+
+    //---------------------------------------------------------------------------------------------
+    case TRACK_RECORD:
+      IOX.digitalWrite(PLAY_LED, LED_ON);
+      IOX.digitalWrite(REC_LED, LED_ON);
+
+      while (millis() < (loopTime + 33)) {  // sync to 33 ms
+      }
+      loopTime = millis();
+
+      if (radio.available()) {
+        radio.read(&data, sizeof(Data_Package)); // get new data package from radio
+      }
+
+      if (readPlayArray() == 1) {
+        Serial.println("End of track file");
+        digitalWrite(PROG_LED, LED_OFF);
+        mode = READY_TRACK_EDIT;
+        file.close();
+        file2.println("EOF");
+        file2.close();
+        if (SD.remove("TRACK_1.TXT")) {
+          Serial.println("File removed");
+        } else {
+          Serial.println("Remove Error");
+          SDerrorFlash();
+        }
+        if (SD.rename("TRACK_C.TXT", "TRACK_1.TXT")) {
+          Serial.println("File renamed");
+        } else {
+          Serial.println("Rename Error");
+          SDerrorFlash();
+        }
+        break;
+      }
+
+      data.LjPotX = plArray[0][1];
+      data.LjPotY = plArray[0][2];
+
+      if ((track == 3) || (track == 4)) {
+        data.RjPotX = plArray[0][3];
+        data.RjPotY = plArray[0][4];
+      }
+      if ((track == 2) || (track == 4)) {
+        data.LsPot = plArray[0][0];
+        data.RsPot = plArray[0][5];
+      }
+      if ((track == 2) || (track == 3)) {
+        data.Switches = plArray[0][6];
+      }
+
+      WriteSDcard2();
+      WriteOutputs();
+
+      break;
+    //---------------------------------------------------------------------------------------------
+    case TRACK_EDIT_PLAY:
+      digitalWrite(PROG_LED, LED_ON);
+      IOX.digitalWrite(PLAY_LED, LED_ON);
+      IOX.digitalWrite(REC_LED, LED_OFF);
+      while (millis() < (loopTime + 33)) {  // sync to 33 ms
+      }
+      loopTime = millis();
+
+      if (readPlayArray() == 1) {
+        Serial.println("End of file");
+        mode = READY_TRACK_EDIT;
+        digitalWrite(PROG_LED, LED_OFF);
+        break;
+      }
+
+      data.LsPot = plArray[0][0];
+      data.LjPotX = plArray[0][1];
+      data.LjPotY = plArray[0][2];
+      data.RjPotX = plArray[0][3];
+      data.RjPotY = plArray[0][4];
+      data.RsPot = plArray[0][5];
+      data.Switches = plArray[0][6];
+
+      WriteOutputs();
+      break;
+
     //---------------------------------------------------------------------------------------------
     default:
       break;
@@ -390,16 +570,24 @@ void loop() {
 //**********************************************************************************************************************
 
 //--------------------------------------------------------------------------------------------------------------------
-// Check play, record buttons and play trigger pins
+// Check play, record, prog buttons and play trigger pins
 //--------------------------------------------------------------------------------------------------------------------
 
-int playButtonNow;
-int playButtonPrev = 0;
+byte playButtonNow;
+byte playButtonPrev = 0;
 unsigned long playButtonTime = 0;
-int recButtonNow;
-int recButtonPrev = 0;
+byte recButtonNow;
+byte recButtonPrev = 0;
 unsigned long recButtonTime = 0;
-unsigned long RP_DEBOUNCE = 200;   // button debounce time (ms)
+byte progButtonNow;
+byte progButtonPrev = 1;
+unsigned long progButtonTime;
+unsigned long progButtonDownTime;
+bool waitForProgUp = false;
+const int RP_DEBOUNCE = 100;   // button debounce time (ms)
+const int SHORT_PGM_PRESS = 150;   // PGM button short press (ms)
+const int LONG_PGM_PRESS = 2000;   // PGM button long press (ms)
+
 
 void CheckButtons(void) {
 
@@ -413,7 +601,9 @@ void CheckButtons(void) {
       case REALTIME:
         mode = PLAY;
         Serial.println("Play");
-        InitSDcard();
+        //InitSDcard();
+        file = SD.open("TRACK_1.TXT", O_READ ); // open file for reading
+        file.rewind();
         break;
 
       case PLAY:
@@ -444,6 +634,19 @@ void CheckButtons(void) {
         mode = RECORD;
         break;
 
+      case READY_TRACK_EDIT:
+        mode = TRACK_EDIT_PLAY;
+        Serial.println("Track Edit Play");
+        //InitSDcard();
+        file = SD.open("TRACK_1.TXT", O_READ ); // open file for reading
+        file.rewind();
+        break;
+
+      case TRACK_EDIT_PLAY:
+        mode = READY_TRACK_EDIT;
+        file.close();
+        break;
+
       default:
         break;
     }
@@ -460,14 +663,29 @@ void CheckButtons(void) {
     switch (mode) {
 
       case REALTIME:
-        mode = START_RECORD;
-        Serial.println("Record");
+        if (IOX.digitalRead(PROG_BTN)) {
+          mode = START_RECORD;    // regular record mode
+          Serial.println("Record");
+          //InitSDcard();
+          file = SD.open("TRACK_1.TXT", O_WRITE | O_CREAT | O_TRUNC ); // open/create file for write, clear file if it exists
+          if (!file) {
+            Serial.println("file open failed");
+            SDerrorFlash();
+          }
+        } else {    // track edit mode
+          digitalWrite(PROG_LED, LED_OFF);
+          mode = READY_TRACK_EDIT;
+          waitForProgUp = true;
+          Serial.println("Ready Track EDIT");
+          track = 1;
+          trackFlashCount = track;
+          playLedFlashTime = millis();
+        }
         break;
 
       case RECORD:
         mode = REALTIME;
         file.println("EOF");
-        file.println(F("******************************"));
         file.close();
         Serial.println("End Record");
         break;
@@ -476,12 +694,93 @@ void CheckButtons(void) {
         mode = PLAY;
         break;
 
+      case READY_TRACK_EDIT:
+        mode = START_TRACK_RECORD;
+        Serial.print("Track ");
+        Serial.print(track);
+        Serial.println(" Record");
+
+        if (track == 1) {
+          file = SD.open("TRACK_1.TXT", O_WRITE | O_CREAT | O_TRUNC ); // open/create file for write, clear file if it exists
+          if (!file) {
+            Serial.println("file 1 open failed");
+            SDerrorFlash();
+          }
+          break;
+
+        } else {
+          file = SD.open("TRACK_1.TXT", O_READ ); // open file for reading
+          if (!file) {
+            Serial.println("file open failed");
+            SDerrorFlash();
+          }
+          file.rewind();
+        }
+
+        file2 = SD.open("TRACK_C.TXT", O_WRITE | O_CREAT | O_TRUNC ); // open/create file for write, clear file if it exists
+        if (!file2) {
+          Serial.println("file 2 open failed");
+          SDerrorFlash();
+        }
+        break;
+
+      case TRACK_1_RECORD:
+        digitalWrite(PROG_LED, LED_OFF);
+        mode = READY_TRACK_EDIT;
+        file.println("EOF");
+        file.close();
+        Serial.println("End Record");
+        break;
+
+      /*
+        case TRACK_RECORD:
+        mode = READY_TRACK_EDIT;
+        file.println("EOF");
+        file.close();
+        file2.close();
+        Serial.println("End Record");
+        break;
+      */
+
+
       default:
         break;
     }
     recButtonTime = millis();
   }
   recButtonPrev = recButtonNow;
+
+  //--------------------------------------------------------------------------------------------------------------------
+  // Check prog Button
+
+  progButtonNow = IOX.digitalRead(PROG_BTN);
+
+  if ((waitForProgUp) && (IOX.digitalRead(PROG_BTN))) {
+    waitForProgUp = 0;
+  } else {
+    if (progButtonNow == 1 && progButtonPrev == 1 && (millis() - progButtonTime) > RP_DEBOUNCE) {
+      progButtonDownTime = millis();
+    }
+
+    if (progButtonNow == 1 && progButtonPrev == 0 && (millis() - progButtonTime) > RP_DEBOUNCE) {
+      if (((millis() - progButtonDownTime ) >= SHORT_PGM_PRESS)
+          && ((millis() - progButtonDownTime ) < LONG_PGM_PRESS)
+          && ( mode == READY_TRACK_EDIT)) {
+        track++;
+        if (track > 4) {
+          track = 1;
+        }
+      }
+      if (((millis() - progButtonDownTime ) > LONG_PGM_PRESS)
+          && ( mode == READY_TRACK_EDIT)) {
+        digitalWrite(PROG_LED, LED_OFF);
+        mode = REALTIME;
+      }
+      progButtonTime = millis();
+    }
+  }
+
+  progButtonPrev = progButtonNow;
 
   //--------------------------------------------------------------------------------------------------------------------
   // Check Trigger inputs
@@ -493,7 +792,9 @@ void CheckButtons(void) {
         case REALTIME:
           mode = TRIGGER_PLAY;
           Serial.println("Trigger Play");
-          InitSDcard();
+          //InitSDcard();
+          file = SD.open("TRACK_1.TXT", O_READ ); // open file for reading
+          file.rewind();
           break;
 
         default:
@@ -509,48 +810,15 @@ void CheckButtons(void) {
 
 void InitSDcard(void) {
 
-  Serial.println(F("Init SD card"));
+  Serial.println("Init SD Card");
 
-  // Initialize the SD.
   if (!SD.begin(SD_CS, SPI_HALF_SPEED)) {
-    //errorHalt("begin failed");
-    Serial.println("begin failed");
+    Serial.println("Init failed");
+    SDerrorFlash();
   }
-
-  // Create or open the file.
-  file = SD.open("TRACK_1.TXT", FILE_WRITE);
-  if (!file) {
-    //errorHalt("open failed");
-    Serial.println("open failed");
-  }
-  // Rewind file to the beginning
-  file.rewind();
-
-  Serial.println(F("Card init done"));
+  Serial.println("Init success");
 }
 
-//--------------------------------------------------------------------------------------------------------------------
-//
-//--------------------------------------------------------------------------------------------------------------------
-
-void InitSDcardWrite(void) {
-
-  Serial.println(F("Init SD card for write"));
-
-  // Initialize the SD.
-  if (!SD.begin(SD_CS, SPI_HALF_SPEED)) {
-    //errorHalt("begin failed");
-    Serial.println("begin failed");
-  }
-
-  // Create or open the file.
-  file = SD.open("TRACK_1.TXT", O_WRITE | O_CREAT | O_TRUNC ); // open/create file for write, clear file if it exists
-  if (!file) {
-    //errorHalt("open failed");
-    Serial.println("open failed");
-  }
-  Serial.println(F("Card init done"));
-}
 //--------------------------------------------------------------------------------------------------------------------
 //
 //--------------------------------------------------------------------------------------------------------------------
@@ -567,10 +835,25 @@ void WriteSDcard(void) {
   file.println();
 }
 
+void WriteSDcard2(void) {
+  file2.print(data.LsPot); file2.print(",");
+  file2.print(data.LjPotX); file2.print(",");
+  file2.print(data.LjPotY); file2.print(",");
+  file2.print(data.RjPotX); file2.print(",");
+  file2.print(data.RjPotY); file2.print(",");
+  file2.print(data.RsPot); file2.print(",");
+  for (int i = 7; i >= 0; i--)
+    file2.print(bitRead(data.Switches, i));
+  file2.println();
+}
+
+//--------------------------------------------------------------------------------------------------------------------
+//
+//--------------------------------------------------------------------------------------------------------------------
 
 void WriteOutputs(void) {
 
-  // Write to servos with adjustments (see above)
+  // Write to servos with adjustments from config.txt
   myServo1.write(AdjustServoData(data.LsPot, spArray[0][1], spArray[0][2], spArray[0][3], spArray[0][4])); // left slide pot
   myServo2.write(AdjustServoData(data.LjPotX, spArray[1][1], spArray[1][2], spArray[1][3], spArray[1][4])); // left joystick x pot
   myServo3.write(AdjustServoData(data.LjPotY, spArray[2][1], spArray[2][2], spArray[2][3], spArray[2][4])); // left joystick y pot
@@ -578,16 +861,15 @@ void WriteOutputs(void) {
   myServo5.write(AdjustServoData(data.RjPotY, spArray[4][1], spArray[4][2], spArray[4][3], spArray[4][4])); // right joystick y pot
   myServo6.write(AdjustServoData(data.RsPot, spArray[5][1], spArray[5][2], spArray[5][3], spArray[5][4])); // right slide pot
 
-  // Write digital data (buttons) to outputs
-  data.Switches = data.Switches ^ digitalOutputPolarity; // flip bit polarity per the output polarity mask from config.txt
-  IOX.digitalWrite(OUT1, bitRead(data.Switches, 7));
-  IOX.digitalWrite(OUT2, bitRead(data.Switches, 6));
-  IOX.digitalWrite(OUT3, bitRead(data.Switches, 5));
-  IOX.digitalWrite(OUT4, bitRead(data.Switches, 4));
-  IOX.digitalWrite(OUT5, bitRead(data.Switches, 3));
-  IOX.digitalWrite(OUT6, bitRead(data.Switches, 2));
-  IOX.digitalWrite(OUT7, bitRead(data.Switches, 1));
-  IOX.digitalWrite(OUT8, bitRead(data.Switches, 0));
+  // Write digital data (buttons) to outputs, flip bit polarity per the output polarity mask from config.txt
+  IOX.digitalWrite(EXB0, bitRead(digitalOutputPolarity, 0) ^ bitRead(data.Switches, 7));
+  IOX.digitalWrite(EXB1, bitRead(digitalOutputPolarity, 1) ^ bitRead(data.Switches, 6));
+  IOX.digitalWrite(EXB2, bitRead(digitalOutputPolarity, 2) ^ bitRead(data.Switches, 5));
+  IOX.digitalWrite(EXB3, bitRead(digitalOutputPolarity, 3) ^ bitRead(data.Switches, 4));
+  IOX.digitalWrite(EXB4, bitRead(digitalOutputPolarity, 4) ^ bitRead(data.Switches, 3));
+  IOX.digitalWrite(EXB5, bitRead(digitalOutputPolarity, 5) ^ bitRead(data.Switches, 2));
+  IOX.digitalWrite(EXB6, bitRead(digitalOutputPolarity, 6) ^ bitRead(data.Switches, 1));
+  IOX.digitalWrite(EXB7, bitRead(digitalOutputPolarity, 7) ^ bitRead(data.Switches, 0));
 
 }
 
@@ -651,8 +933,8 @@ const int NRFfrequencyTable[12] = {100, 102, 104, 106, 108, 110, 112, 114, 116, 
 const byte pipes[][6] = {"Pipe0", "Pipe1", "Pipe2", "Pipe3", "Pipe4", "Pipe5"};
 
 void SetUpRadio(void) {
-  int NRFfrequencyIndex = 0;
-  int NRFpipeIndex = 1;
+  byte NRFfrequencyIndex = 0;
+  byte NRFpipeIndex = 1;
 
   NRFfrequencyIndex = radioFrequency; // radio frequency from SD card
   NRFpipeIndex = 1;                   // always pipe1 for receiver recorder
@@ -823,7 +1105,7 @@ void printArray(void) {
 }
 
 //--------------------------------------------------------------------------------------------------------------------
-
+// Read config information from SD card
 
 size_t n;      // Length of returned field with delimiter.
 char str[20];  // Must hold longest field with delimiter and zero byte.
@@ -831,16 +1113,11 @@ char *ptr;     // Test for valid field.
 
 void ReadSdConfig(void) {
 
-  Serial.println("Init SD Card");
-
-  if (!SD.begin(SD_CS)) {
-    Serial.println("initialization failed!");
-    return;
-  }
-  Serial.println("Card init done");
+  // init the card
+  InitSDcard();
 
   // open the file for reading:
-  file = SD.open("config.txt");
+  file = SD.open("config.txt", O_READ );
   if (file) {
     Serial.println("Read config.txt:");
 
@@ -873,7 +1150,7 @@ void ReadSdConfig(void) {
                 readField(&file, str, sizeof(str), ",\n");
                 digitalOutputPolarity = (strtol(str, &ptr, 2));
                 if (EEPROM.read(1) != digitalOutputPolarity) {  // save in eeprom if value changed
-                  EEPROM.write(1, digitalOutputPolarity); 
+                  EEPROM.write(1, digitalOutputPolarity);
                 }
                 Serial.print("  Digital Output Polarity Mask = ");
                 Serial.print(str);
@@ -1011,6 +1288,41 @@ void CardNotPresentError(void) {
     IOX.digitalWrite(REC_LED, LED_ON);
     IOX.digitalWrite(PLAY_LED, LED_OFF);
     delay(200);
+  }
+}
+
+//--------------------------------------------------------------------------------------------------------------------
+// SD Card Error
+
+void SDerrorFlash(void) {
+  Serial.println("SD error");
+
+  while (1) {
+    IOX.digitalWrite(PROG_LED, LED_OFF);
+    delay(200);
+    IOX.digitalWrite(PROG_LED, LED_ON);
+    delay(200);
+  }
+}
+
+//--------------------------------------------------------------------------------------------------------------------
+// Blink Code Version
+
+void BlinkCodeVersion(void) {
+  while (1) {
+    for (int i = 1; i <= VERSION; i++) {
+      IOX.digitalWrite(PLAY_LED, LED_ON);
+      delay(200);
+      IOX.digitalWrite(PLAY_LED, LED_OFF);
+      delay(200);
+    }
+
+    for (int i = 1; i <= REVSION; i++) {
+      IOX.digitalWrite(REC_LED, LED_ON);
+      delay(200);
+      IOX.digitalWrite(REC_LED, LED_OFF);
+      delay(200);
+    }
   }
 }
 
