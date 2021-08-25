@@ -1,0 +1,103 @@
+# DIY Receiver Recorder Configuration V3.1
+# for use with Receiver Recorder Version 3.1
+
+
+# Record protect SD card, P=Protected N=Not Protected
+*RP N
+
+# Radio Frequency (1 to 10), must match controller frequency
+# Frequencies 5 to 10 are reccomended as are they above wifi
+*RF 5
+
+# Servo parameters
+#      Servo number
+#     /   Servo endpoint 1 in degrees (0 to 180)
+#    /   /   Servo endpoint 2 in degrees (0 to 180)
+#   /   /   /   Deadzone Center in degrees (0 to 180)
+#  /   /   /   /  Deadzone, in degrees (0 to 180)
+# /   /   /   /  /
+*SP
+1,180,000,090,010
+2,000,180,090,010
+3,000,180,090,090
+4,000,180,090,010
+5,000,180,090,010
+6,000,180,090,010
+7,000,180,090,000
+8,010,060,020,000
+
+
+# Digitial Output polarity (0=low true, 1=high true)
+#   EXB7 (controller S7 & S9)
+#   |EXB6 (controller S3)
+#   ||EXB5 (controller A2)
+#   |||EXB4 (controller S6)
+#   ||||EXB3 (controller S5)
+#   |||||EXB2 (controller A1)
+#   ||||||EXB1 (controller S2)
+#   |||||||EXB0 (controller S4 & S8)
+#   ||||||||
+#   VVVVVVVV
+*OP 11111111
+
+# Trigger enable, E=Enabled N=Not enabled
+*TE E
+
+# Trigger power up delay, in seconds (0 to 999)
+*TP 10
+
+# Trigger delay lockout, in seconds (0 to 999)
+*TD 5
+
+# Replay enable, E=Enabled N=Not enabled
+*RE E
+
+# Replay delay, in seconds (0 to 999)
+*RD 30
+
+# Audio Board enable, E=Enabled N=Not enabled
+*AE E
+
+# Clip 1 (ambiant) volume (0 to 30)
+*A1 20
+
+# Clip 2 volume (0 to 30)
+*A2 30
+
+# Jaw enable, E=Enabled N=Not enabled
+#  Jaw servo (S8) is enabled for audio clip 2
+#  clip file is located in the mp3 directory and is named 0002.mp3
+#  if not enabled (N), servo 8 is controlled by track 5
+*AJ E 
+
+# Play and loop Audio clip 1 (ambiant) at power up, E=Enabled N=Not enabled
+#  clip file is located in the mp3 directory and is named 0001.mp3
+*AA E
+
+# Play Audio clip 2 at record and track play/record start, E=Enabled N=Not enabled
+#  clip file is located in the mp3 directory and is named 0002.mp3
+#  if not enabled (N), clip plays via track 6, controller buttons S4 (left shoulder) or S8
+*AP E
+
+# Jaw frequency band select (0=not selected, 1=selected)
+#  selects the frequency bands from the audio clip used for jaw motion
+#   16KHz
+#   |6.25KHz
+#   ||2.5KHz
+#   |||1KHz
+#   ||||400Hz
+#   |||||160Hz
+#   ||||||63Hz
+#   |||||||Unused
+#   ||||||||
+#   VVVVVVVV
+*AF 00010000
+
+# Jaw Gain pot enable, E=Enabled N=Not enabled
+#  pot R9 on sound board adjusts jaw servo gain if enabled (E)
+#  Jaw gain is fixed if not elabled (N)
+*AG E
+
+# End of file
+
+
