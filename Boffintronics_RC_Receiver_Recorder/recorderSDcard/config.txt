@@ -68,7 +68,7 @@
 #  Jaw servo (S8) is enabled for audio clip 2
 #  clip file is located in the mp3 directory and is named 0002.mp3
 #  if not enabled (N), servo 8 is controlled by track 5
-*AJ N 
+*AJ E 
 
 # Play and loop Audio clip 1 (ambiant) at power up, E=Enabled N=Not enabled
 #  clip file is located in the mp3 directory and is named 0001.mp3
