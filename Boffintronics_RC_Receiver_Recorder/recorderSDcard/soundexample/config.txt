@@ -1,4 +1,4 @@
-# DIY Receiver Recorder Configuration V3.1
+# DIY Receiver Recorder Configuration Version 3.1
 # for use with Receiver Recorder Version 3.1
 
 
